@@ -40,6 +40,11 @@ struct FuncPair {
     TraceFunction* f2;
 };
 
+struct Total {
+    SubCost a;
+    SubCost b;
+};
+
 typedef double SortDiffKey;
 typedef uint64_t SortKey;
 
@@ -297,15 +302,27 @@ void printFilteredBy(QTextStream &out, const DiffParams &params) {
         out << "Filtered by: ";
 
         if (params.funcNameFilter.size()) {
-            out << "name: '" << params.funcNameFilter << "'";
+            out << "name: '" << params.funcNameFilter << "' ";
         }
 
         if (params.minimalValue > 0) {
-            out << " and minimal value: " << params.minimalValue;
+            out << "minimal value: '" << params.minimalValue << "' ";
         }
 
         out << endl;
     }
+}
+
+void printCommonFilteredTotals(QTextStream &out, const Total &totals) {
+    QString text;
+    text.sprintf("%21llu %21llu %+21ld %+14.2f / %s", totals.a.v, totals.b.v, diff(totals.a, totals.b), percentDiff(totals.a, totals.b), "TOTAL");
+    out << endl << text << endl;
+}
+
+void printFilteredTotals(QTextStream &out, SubCost total) {
+    QString text;
+    text.sprintf("                      %21llu / %s", total.v, "TOTAL");
+    out << endl << text << endl;
 }
 
 void printSortedBy(QTextStream &out, const DiffParams &params) {
@@ -349,7 +366,7 @@ void filter(const DiffParams &params, TraceFunction* f, K sortKey, C &out) {
     }
 }
 
-void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys, TraceFunctionMap &map1, TraceFunctionMap &map2, SortedCommonFunctionsMap &common) {
+void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys, TraceFunctionMap &map1, TraceFunctionMap &map2, SortedCommonFunctionsMap &common, Total &total) {
     for (auto it = keys.cbegin(); it != keys.cend(); ++it) {
         //todo: use ref here
         auto key = *it;
@@ -383,9 +400,13 @@ void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys,
         if (sortKey >= params.minimalValue) {
             if (params.funcNameFilter.size()) {
                 if (fp.f1->prettyName().indexOf(params.funcNameFilter) >= 0) {
+                    total.a += v1;
+                    total.b += v2;
                     common.insert(sortKey, fp);
                 }
             } else {
+                total.a += v1;
+                total.b += v2;
                 common.insert(sortKey, fp);
             }
         }
@@ -393,8 +414,6 @@ void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys,
 }
 
 void printCommonFunctionsHeader(QTextStream &out) {
-    out << "Common functions:" << endl;
-    // print header
     out << "                    A ";
     out << "                    B ";
     out << "                B - A ";
@@ -433,9 +452,7 @@ void printCommonFunctionsMap(QTextStream &out, const DiffParams &params, SortedC
     }
 }
 
-void printFunctionsHeader(const QString &prefix, QTextStream &out) {
-    out << prefix << endl;
-
+void printFunctionsHeader(QTextStream &out) {
     out << "           call count ";
     out << "                value ";
     out << "/ ";
@@ -443,7 +460,7 @@ void printFunctionsHeader(const QString &prefix, QTextStream &out) {
     out << endl;
 }
 
-void fillFunctionsMap(const DiffParams &params, const QSet<QString> &keys, TraceFunctionMap &map, SortedFunctionsMap &sorted) {
+void fillFunctionsMap(const DiffParams &params, const QSet<QString> &keys, TraceFunctionMap &map, SortedFunctionsMap &sorted, SubCost &total) {
     for (auto it = keys.cbegin(); it != keys.cend(); ++it) {
         //todo: use ref
         auto key = *it;
@@ -460,9 +477,11 @@ void fillFunctionsMap(const DiffParams &params, const QSet<QString> &keys, Trace
         if (sortKey >= params.minimalValue) {
             if (params.funcNameFilter.size()) {
                 if (f->prettyName().indexOf(params.funcNameFilter) >= 0) {
+                    total += v;
                     sorted.insert(sortKey, f);
                 }
             } else {
+                total += v;
                 sorted.insert(sortKey, f);
             }
         }
@@ -565,12 +584,15 @@ int main(int argc, char** argv)
     QSet<QString> intersection(keys1.toSet().intersect(keys2.toSet()));
     if (!intersection.empty()) {
         SortedCommonFunctionsMap common;
-        fillCommonFunctionsMap(params, intersection, map1, map2, common);
+        Total total;
+        fillCommonFunctionsMap(params, intersection, map1, map2, common, total);
         if (common.size()) {
+            out << "Common functions:" << endl;
             printCommonSortedBy(out, params);
             printFilteredBy(out, params);
             printCommonFunctionsHeader(out);
             printCommonFunctionsMap(out, params, common);
+            printCommonFilteredTotals(out, total);
             out << endl;
         }
     }
@@ -578,12 +600,15 @@ int main(int argc, char** argv)
     QSet<QString> keys1minus2(keys1.toSet().subtract(keys2.toSet()));
     if (!keys1minus2.empty()) {
         SortedFunctionsMap f1minus2;
-        fillFunctionsMap(params, keys1minus2, map1, f1minus2);
+        SubCost total;
+        fillFunctionsMap(params, keys1minus2, map1, f1minus2, total);
         if (f1minus2.size()) {
+            out << "A functions (not in B):" << endl;
             printSortedBy(out, params);
             printFilteredBy(out, params);
-            printFunctionsHeader("A functions (not in B):", out);
+            printFunctionsHeader(out);
             printFunctionsMap(out, params, f1minus2);
+            printFilteredTotals(out, total);
             out << endl;
         }
     }
@@ -591,12 +616,15 @@ int main(int argc, char** argv)
     QSet<QString> keys2minus1(keys2.toSet().subtract(keys1.toSet()));
     if (!keys2minus1.empty()) {
         SortedFunctionsMap f2minus1;
-        fillFunctionsMap(params, keys2minus1, map2, f2minus1);
+        SubCost total;
+        fillFunctionsMap(params, keys2minus1, map2, f2minus1, total);
         if (f2minus1.size()) {
+            out << "B functions (not in A):" << endl;
             printSortedBy(out, params);
             printFilteredBy(out, params);
-            printFunctionsHeader("B functions (not in A):", out);
+            printFunctionsHeader(out);
             printFunctionsMap(out, params, f2minus1);
+            printFilteredTotals(out, total);
             out << endl;
         }
     }
