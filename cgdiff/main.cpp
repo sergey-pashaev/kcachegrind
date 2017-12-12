@@ -336,6 +336,19 @@ SubCost getValue(const DiffParams &params, TraceFunction* f) {
     return v;
 }
 
+template <typename K, typename C>
+void filter(const DiffParams &params, TraceFunction* f, K sortKey, C &out) {
+    if (sortKey >= params.minimalValue) {
+        if (params.funcNameFilter.size()) {
+            if (f->prettyName().indexOf(params.funcNameFilter) >= 0) {
+                out.insert(sortKey, f);
+            }
+        } else {
+            out.insert(sortKey, f);
+        }
+    }
+}
+
 void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys, TraceFunctionMap &map1, TraceFunctionMap &map2, SortedCommonFunctionsMap &common) {
     for (auto it = keys.cbegin(); it != keys.cend(); ++it) {
         //todo: use ref here
@@ -346,6 +359,7 @@ void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys,
         TraceFunctionMap::iterator itf2 = map2.find(key);
 
         FuncPair fp(&(*itf1), &(*itf2));
+        Q_ASSERT(fp.f1->prettyName() == fp.f2->prettyName());
 
         SubCost v1 = getValue(params, fp.f1);
         SubCost v2 = getValue(params, fp.f2);
@@ -365,6 +379,7 @@ void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys,
             sortKey = std::abs((SortDiffKey)diff(v1, v2));
         }
 
+        // filter(params, fp.f1, sortKey, common);
         if (sortKey >= params.minimalValue) {
             if (params.funcNameFilter.size()) {
                 if (fp.f1->prettyName().indexOf(params.funcNameFilter) >= 0) {
@@ -441,6 +456,7 @@ void fillFunctionsMap(const DiffParams &params, const QSet<QString> &keys, Trace
 
         SortKey sortKey = params.sortByCallCount ? callcount : v;
 
+        // filter(params, fp.f1, sortKey, common);
         if (sortKey >= params.minimalValue) {
             if (params.funcNameFilter.size()) {
                 if (f->prettyName().indexOf(params.funcNameFilter) >= 0) {
