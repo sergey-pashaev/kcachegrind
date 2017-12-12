@@ -50,7 +50,8 @@ struct DiffParams {
     DiffParams()
         : eventStr("Ir"), event(nullptr), exclusive(false), perCall(false),
           sortByCallCount(false), sortByPercentage(false),
-          hideTemplates(true), showCycles(false) {}
+          hideTemplates(true), showCycles(false), minimalDelta(1.0) /* 1% or 1 - to skip functions w/o changes */
+    {}
 
     QString eventStr;
     EventType* event;
@@ -60,6 +61,7 @@ struct DiffParams {
     bool sortByPercentage;
     bool hideTemplates;
     bool showCycles;
+    SortDiffKey minimalDelta;
 };
 
 void showHelp(QTextStream& out, bool fullHelp = true)
@@ -73,6 +75,7 @@ void showHelp(QTextStream& out, bool fullHelp = true)
                "Options:\n"
                " -h        Show this help text\n"
                " -n        Do not detect recursive cycles\n"
+               " -m <num>  Show only function with <num> minimal delta value\n"
                " -s <ev>   Show counters for event <ev>\n"
                " -e        Sort by exclusive cost change\n"
                " -c        Sort by call count change\n"
@@ -344,7 +347,9 @@ void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys,
             sortKey = std::abs((SortDiffKey)diff(v1, v2));
         }
 
-        common.insert(sortKey, fp);
+        if (sortKey >= params.minimalDelta) {
+            common.insert(sortKey, fp);
+        }
     }
 }
 
@@ -387,8 +392,6 @@ void printCommonFunctionsMap(QTextStream &out, const DiffParams &params, SortedC
         text.sprintf("%21llu %21llu %+21ld %+14.2f / %s", v1.v, v2.v, diffAbs, diffPercent, fp.f1->prettyName().toStdString().c_str());
         out << text << endl;
     }
-
-    out << endl;
 }
 
 void printFunctionsHeader(const QString &prefix, QTextStream &out) {
@@ -435,8 +438,10 @@ void printFunctionsMap(QTextStream &out, const DiffParams &params, SortedFunctio
         text.sprintf("%21llu %21llu / %s", callcount.v, v.v, f->prettyName().toStdString().c_str());
         out << text << endl;
     }
+}
 
-    out << endl;
+void printSkippedLine(QTextStream &out, const DiffParams &params) {
+    out << "Functions with value delta < than " << params.minimalDelta << " are skipped." << endl;
 }
 
 int main(int argc, char** argv)
@@ -455,9 +460,13 @@ int main(int argc, char** argv)
     DiffParams params;
     QStringList files;
 
+    bool toDoubleOk = true;
+    QString toDoubleStr;
+
     for(int arg = 0; arg < list.count(); arg++) {
         if      (list[arg] == QLatin1String("-h")) showHelp(out);
         else if (list[arg] == QLatin1String("-n")) params.showCycles = true;
+        else if (list[arg] == QLatin1String("-m")) toDoubleStr = list[++arg];
         else if (list[arg] == QLatin1String("-s")) params.eventStr = list[++arg];
         else if (list[arg] == QLatin1String("-e")) params.exclusive = true;
         else if (list[arg] == QLatin1String("-c")) params.sortByCallCount = true;
@@ -466,6 +475,14 @@ int main(int argc, char** argv)
         else if (list[arg] == QLatin1String("-t")) params.hideTemplates = false;
         else
             files << list[arg];
+    }
+
+    if (toDoubleStr.size()) {
+        params.minimalDelta = toDoubleStr.toDouble(&toDoubleOk);
+        if (!toDoubleOk) {
+            out << "Error: -m value:'" << toDoubleStr << "' is not floating point number." << endl;
+            return 1;
+        }
     }
 
     GlobalConfig::setHideTemplates(params.hideTemplates);
@@ -508,6 +525,12 @@ int main(int argc, char** argv)
         printCommonSortedBy(out, params);
         printCommonFunctionsHeader(out);
         printCommonFunctionsMap(out, params, common);
+
+        if (intersection.size() > common.size()) {
+            printSkippedLine(out, params);
+        }
+
+        out << endl;
     }
 
     QSet<QString> keys1minus2(keys1.toSet().subtract(keys2.toSet()));
@@ -517,6 +540,8 @@ int main(int argc, char** argv)
         printSortedBy(out, params);
         printFunctionsHeader("A functions (not in B):", out);
         printFunctionsMap(out, params, f1minus2);
+
+        out << endl;
     }
 
     QSet<QString> keys2minus1(keys2.toSet().subtract(keys1.toSet()));
@@ -526,6 +551,8 @@ int main(int argc, char** argv)
         printSortedBy(out, params);
         printFunctionsHeader("B functions (not in A):", out);
         printFunctionsMap(out, params, f2minus1);
+
+        out << endl;
     }
 
     return 0;
