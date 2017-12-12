@@ -12,4 +12,4 @@ lessThan(QT_MINOR_VERSION, 3) {
 
 
 TEMPLATE = subdirs
-SUBDIRS = cgview qcachegrind
+SUBDIRS = cgview cgdiff qcachegrind
