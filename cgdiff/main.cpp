@@ -50,7 +50,7 @@ struct DiffParams {
     DiffParams()
         : eventStr("Ir"), event(nullptr), exclusive(false), perCall(false),
           sortByCallCount(false), sortByPercentage(false),
-          hideTemplates(true), showCycles(false), minimalDelta(1.0) /* 1% or 1 - to skip functions w/o changes */
+          hideTemplates(true), showCycles(false), minimalValue(1.0) /* 1% or 1 - to skip functions w/o changes */
     {}
 
     QString eventStr;
@@ -61,7 +61,8 @@ struct DiffParams {
     bool sortByPercentage;
     bool hideTemplates;
     bool showCycles;
-    SortDiffKey minimalDelta;
+    SortDiffKey minimalValue;
+    QString funcNameFilter;
 };
 
 void showHelp(QTextStream& out, bool fullHelp = true)
@@ -77,6 +78,7 @@ void showHelp(QTextStream& out, bool fullHelp = true)
                " -n        Do not detect recursive cycles\n"
                " -m <num>  Show only function with <num> minimal delta value\n"
                " -s <ev>   Show counters for event <ev>\n"
+               " -f <str>  Show only functions with <str> in name\n"
                " -e        Sort by exclusive cost change\n"
                " -c        Sort by call count change\n"
                " -r        Sort percentage change\n"
@@ -290,6 +292,22 @@ void printCommonSortedBy(QTextStream &out, const DiffParams &params) {
     out << endl;
 }
 
+void printFilteredBy(QTextStream &out, const DiffParams &params) {
+    if (params.funcNameFilter.size() || params.minimalValue > 0) {
+        out << "Filtered by: ";
+
+        if (params.funcNameFilter.size()) {
+            out << "name: '" << params.funcNameFilter << "'";
+        }
+
+        if (params.minimalValue > 0) {
+            out << " and minimal value: " << params.minimalValue;
+        }
+
+        out << endl;
+    }
+}
+
 void printSortedBy(QTextStream &out, const DiffParams &params) {
     out << "Sorted by: ";
 
@@ -347,8 +365,14 @@ void fillCommonFunctionsMap(const DiffParams &params, const QSet<QString> &keys,
             sortKey = std::abs((SortDiffKey)diff(v1, v2));
         }
 
-        if (sortKey >= params.minimalDelta) {
-            common.insert(sortKey, fp);
+        if (sortKey >= params.minimalValue) {
+            if (params.funcNameFilter.size()) {
+                if (fp.f1->prettyName().indexOf(params.funcNameFilter) >= 0) {
+                    common.insert(sortKey, fp);
+                }
+            } else {
+                common.insert(sortKey, fp);
+            }
         }
     }
 }
@@ -417,8 +441,15 @@ void fillFunctionsMap(const DiffParams &params, const QSet<QString> &keys, Trace
 
         SortKey sortKey = params.sortByCallCount ? callcount : v;
 
-        //todo: add limit by percent
-        sorted.insert(sortKey, f);
+        if (sortKey >= params.minimalValue) {
+            if (params.funcNameFilter.size()) {
+                if (f->prettyName().indexOf(params.funcNameFilter) >= 0) {
+                    sorted.insert(sortKey, f);
+                }
+            } else {
+                sorted.insert(sortKey, f);
+            }
+        }
     }
 }
 
@@ -438,10 +469,6 @@ void printFunctionsMap(QTextStream &out, const DiffParams &params, SortedFunctio
         text.sprintf("%21llu %21llu / %s", callcount.v, v.v, f->prettyName().toStdString().c_str());
         out << text << endl;
     }
-}
-
-void printSkippedLine(QTextStream &out, const DiffParams &params) {
-    out << "Functions with value delta < than " << params.minimalDelta << " are skipped." << endl;
 }
 
 int main(int argc, char** argv)
@@ -468,6 +495,7 @@ int main(int argc, char** argv)
         else if (list[arg] == QLatin1String("-n")) params.showCycles = true;
         else if (list[arg] == QLatin1String("-m")) toDoubleStr = list[++arg];
         else if (list[arg] == QLatin1String("-s")) params.eventStr = list[++arg];
+        else if (list[arg] == QLatin1String("-f")) params.funcNameFilter = list[++arg];
         else if (list[arg] == QLatin1String("-e")) params.exclusive = true;
         else if (list[arg] == QLatin1String("-c")) params.sortByCallCount = true;
         else if (list[arg] == QLatin1String("-r")) params.sortByPercentage = true;
@@ -478,7 +506,7 @@ int main(int argc, char** argv)
     }
 
     if (toDoubleStr.size()) {
-        params.minimalDelta = toDoubleStr.toDouble(&toDoubleOk);
+        params.minimalValue = toDoubleStr.toDouble(&toDoubleOk);
         if (!toDoubleOk) {
             out << "Error: -m value:'" << toDoubleStr << "' is not floating point number." << endl;
             return 1;
@@ -522,37 +550,39 @@ int main(int argc, char** argv)
     if (!intersection.empty()) {
         SortedCommonFunctionsMap common;
         fillCommonFunctionsMap(params, intersection, map1, map2, common);
-        printCommonSortedBy(out, params);
-        printCommonFunctionsHeader(out);
-        printCommonFunctionsMap(out, params, common);
-
-        if (intersection.size() > common.size()) {
-            printSkippedLine(out, params);
+        if (common.size()) {
+            printCommonSortedBy(out, params);
+            printFilteredBy(out, params);
+            printCommonFunctionsHeader(out);
+            printCommonFunctionsMap(out, params, common);
+            out << endl;
         }
-
-        out << endl;
     }
 
     QSet<QString> keys1minus2(keys1.toSet().subtract(keys2.toSet()));
     if (!keys1minus2.empty()) {
         SortedFunctionsMap f1minus2;
         fillFunctionsMap(params, keys1minus2, map1, f1minus2);
-        printSortedBy(out, params);
-        printFunctionsHeader("A functions (not in B):", out);
-        printFunctionsMap(out, params, f1minus2);
-
-        out << endl;
+        if (f1minus2.size()) {
+            printSortedBy(out, params);
+            printFilteredBy(out, params);
+            printFunctionsHeader("A functions (not in B):", out);
+            printFunctionsMap(out, params, f1minus2);
+            out << endl;
+        }
     }
 
     QSet<QString> keys2minus1(keys2.toSet().subtract(keys1.toSet()));
     if (!keys2minus1.empty()) {
         SortedFunctionsMap f2minus1;
         fillFunctionsMap(params, keys2minus1, map2, f2minus1);
-        printSortedBy(out, params);
-        printFunctionsHeader("B functions (not in A):", out);
-        printFunctionsMap(out, params, f2minus1);
-
-        out << endl;
+        if (f2minus1.size()) {
+            printSortedBy(out, params);
+            printFilteredBy(out, params);
+            printFunctionsHeader("B functions (not in A):", out);
+            printFunctionsMap(out, params, f2minus1);
+            out << endl;
+        }
     }
 
     return 0;
